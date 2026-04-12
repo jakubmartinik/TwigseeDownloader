@@ -1,0 +1,35 @@
+name: "Twigsee Photo Downloader"
+description: "Downloads photos from Twigsee and uploads them to Google Photos via rclone"
+version: "1.6.1"
+slug: "twigsee_downloader"
+arch:
+  - aarch64
+  - amd64
+startup: "application"
+boot: "manual"
+options:
+  email: ""
+  password: ""
+  max_age_days: 5
+  schedule_hours: 6
+  teacher: ""
+  rclone_enabled: true
+  rclone_google_client_id: ""
+  rclone_google_client_secret: ""
+  rclone_google_token: ""
+  quiet_hours_start: 22
+  quiet_hours_end: 7
+schema:
+  email: "email"
+  password: "password"
+  max_age_days: "int(1,365)"
+  schedule_hours: "int(1,168)"
+  teacher: "str?"
+  rclone_enabled: "bool"
+  rclone_google_client_id: "str"
+  rclone_google_client_secret: "password"
+  rclone_google_token: "password"
+  quiet_hours_start: "int(0,23)"
+  quiet_hours_end: "int(0,23)"
+map:
+  - media:rw
