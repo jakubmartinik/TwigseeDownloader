@@ -842,7 +842,60 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
     return total_new
 
 
+def ha_main():
+    options = json.loads(Path("/data/options.json").read_text())
+
+    os.environ["TWIGSEE_EMAIL"] = options.get("email", "")
+    os.environ["TWIGSEE_PASSWORD"] = options.get("password", "")
+
+    max_age_days = options.get("max_age_days", DEFAULT_MAX_AGE_DAYS)
+    schedule_hours = options.get("schedule_hours", 6)
+    teacher = options.get("teacher") or None
+    rclone_enabled = options.get("rclone_enabled", False)
+    quiet_start = options.get("quiet_hours_start", 0)
+    quiet_end = options.get("quiet_hours_end", 0)
+
+    rclone_conf = rclone_remote = None
+    if rclone_enabled:
+        rclone_conf = "/data/rclone.conf"
+        rclone_remote = "googlephotos:album"
+        log.info("Writing rclone config...")
+        Path(rclone_conf).write_text(
+            f"[googlephotos]\ntype = google photos\n"
+            f"client_id = {options.get('rclone_google_client_id', '')}\n"
+            f"client_secret = {options.get('rclone_google_client_secret', '')}\n"
+            f"token = {options.get('rclone_google_token', '')}\n"
+            f"read_only = false\n"
+        )
+
+    def is_quiet_hour():
+        h = datetime.now().hour
+        return (quiet_start <= h < quiet_end) if quiet_start <= quiet_end else (h >= quiet_start or h < quiet_end)
+
+    log.info("Twigsee Downloader started — every %d hours, max age %d days, quiet %d:00-%d:00",
+             schedule_hours, max_age_days, quiet_start, quiet_end)
+
+    while True:
+        if is_quiet_hour():
+            log.info("Quiet hours active, skipping. Next check in 30 min.")
+            time.sleep(1800)
+            continue
+        log.info("Starting download run...")
+        try:
+            run(headless=True, download_dir=Path("/media/twigsee"),
+                max_age_days=max_age_days, teacher_filter=teacher,
+                rclone_conf=rclone_conf, rclone_remote=rclone_remote)
+        except Exception as e:
+            log.error("Download run failed: %s", e)
+        log.info("Next run in %d hours", schedule_hours)
+        time.sleep(schedule_hours * 3600)
+
+
 def main():
+    if Path("/data/options.json").exists():
+        ha_main()
+        return
+
     parser = argparse.ArgumentParser(description="Twigsee Photo Downloader")
     parser.add_argument("--headless", dest="headless", action="store_true", default=True)
     parser.add_argument("--no-headless", dest="headless", action="store_false")

@@ -18,8 +18,6 @@ RUN pip3 install --no-cache-dir --break-system-packages playwright
 
 # Copy add-on files
 COPY twigsee_download.py /app/twigsee_download.py
-COPY run.sh /app/run.sh
-RUN chmod a+x /app/run.sh
 
 ENTRYPOINT []
-CMD [ "/usr/bin/env", "bashio", "/app/run.sh" ]
+CMD ["python3", "/app/twigsee_download.py"]
