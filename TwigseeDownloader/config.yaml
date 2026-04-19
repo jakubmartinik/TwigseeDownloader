@@ -1,6 +1,6 @@
 name: "Twigsee Photo Downloader"
 description: "Downloads photos from Twigsee and uploads them to Google Photos via rclone"
-version: "1.6.12"
+version: "1.6.13"
 slug: "twigsee_downloader"
 arch:
   - aarch64
