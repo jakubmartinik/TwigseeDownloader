@@ -1,13 +1,12 @@
 #!/bin/sh
 set -e
 
-USERNAME=$(bashio::config 'username')
-PASSWORD=$(bashio::config 'password')
-BASE_URL=$(bashio::config 'base_url')
+USERNAME=$(jq -r '.username' /data/options.json)
+PASSWORD=$(jq -r '.password' /data/options.json)
+BASE_URL=$(jq -r '.base_url' /data/options.json)
 
 export ROHLIK_USERNAME="$USERNAME"
 export ROHLIK_PASSWORD="$PASSWORD"
 export ROHLIK_BASE_URL="$BASE_URL"
 
-exec mcp-proxy --port 8811 -- npx @tomaspavlin/rohlik-
-mcp
+exec mcp-proxy --port 8811 -- npx @tomaspavlin/rohlik-mcp
