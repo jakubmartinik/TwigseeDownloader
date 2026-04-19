@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """
+Y608-RGQH-E5PU-MPYK-YFF7-XPAD-I0SC
 Twigsee Photo Downloader
 ========================
 Logs into Twigsee, finds posts with photos, opens each post's photo gallery,
