@@ -1,6 +1,6 @@
 name: "Rohlik MCP"
 description: "MCP server for Rohlik.cz grocery shopping"
-version: "1.0.0"
+version: "1.0.1"
 slug: "rohlik_mcp"
 arch:
   - aarch64
