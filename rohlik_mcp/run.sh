@@ -5,6 +5,9 @@ USERNAME=$(jq -r '.username' /data/options.json)
 PASSWORD=$(jq -r '.password' /data/options.json)
 BASE_URL=$(jq -r '.base_url' /data/options.json)
 
+echo "DEBUG: Username=$ROHLIK_USERNAME"
+echo "DEBUG: Base=$ROHLIK_BASE_URL"
+
 export ROHLIK_USERNAME="$USERNAME"
 export ROHLIK_PASSWORD="$PASSWORD"
 export ROHLIK_BASE_URL="$BASE_URL"
