@@ -9,4 +9,4 @@ export ROHLIK_USERNAME="$USERNAME"
 export ROHLIK_PASSWORD="$PASSWORD"
 export ROHLIK_BASE_URL="$BASE_URL"
 
-exec mcp-proxy --port 8811 -- npx @tomaspavlin/rohlik-mcp
+exec mcp-proxy --host 0.0.0.0 --port 8811 -- npx @tomaspavlin/rohlik-mcp
