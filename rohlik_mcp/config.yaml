@@ -14,12 +14,6 @@ options:
   password: ""
   base_url: "https://www.rohlik.cz"
 schema:
-  username:
-    type: str
-    required: true
-  password:
-    type: str
-    required: true
-  base_url:
-    type: str
-    required: true
+  username: str
+  password: str
+  base_url: str
