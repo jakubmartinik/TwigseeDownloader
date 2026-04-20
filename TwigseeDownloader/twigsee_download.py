@@ -860,14 +860,31 @@ def ha_main():
     if rclone_enabled:
         rclone_conf = "/data/rclone.conf"
         rclone_remote = "googlephotos:album"
-        log.info("Writing rclone config...")
-        Path(rclone_conf).write_text(
+        rclone_conf_path = Path(rclone_conf)
+        client_id = options.get('rclone_google_client_id', '')
+        client_secret = options.get('rclone_google_client_secret', '')
+        token = options.get('rclone_google_token', '')
+        desired = (
             f"[googlephotos]\ntype = google photos\n"
-            f"client_id = {options.get('rclone_google_client_id', '')}\n"
-            f"client_secret = {options.get('rclone_google_client_secret', '')}\n"
-            f"token = {options.get('rclone_google_token', '')}\n"
+            f"client_id = {client_id}\n"
+            f"client_secret = {client_secret}\n"
+            f"token = {token}\n"
             f"read_only = false\n"
         )
+        # Only write the config if it doesn't exist yet or if credentials
+        # (client_id/secret/token) changed in options. Preserves any token
+        # refresh rclone performed during previous runs.
+        existing = rclone_conf_path.read_text() if rclone_conf_path.exists() else ""
+        credentials_changed = (
+            f"client_id = {client_id}" not in existing
+            or f"client_secret = {client_secret}" not in existing
+            or (not existing and token)
+        )
+        if not rclone_conf_path.exists() or credentials_changed:
+            log.info("Writing rclone config...")
+            rclone_conf_path.write_text(desired)
+        else:
+            log.info("Reusing existing rclone config (token may have been refreshed).")
 
     def is_quiet_hour():
         h = datetime.now().hour
