@@ -1,5 +1,5 @@
 {
-  "domain": "mcp_proxy",
+  "domain": "mcp_proxy_rohlik",
   "name": "MCP Webhook Proxy",
   "documentation": "https://github.com/homeassistant-ai/ha-mcp",
   "version": "1.0.0",

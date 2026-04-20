@@ -2,7 +2,7 @@
 
 from homeassistant.config_entries import ConfigFlow
 
-DOMAIN = "mcp_proxy"
+DOMAIN = "mcp_proxy_rohlik"
 
 
 class McpProxyConfigFlow(ConfigFlow, domain=DOMAIN):

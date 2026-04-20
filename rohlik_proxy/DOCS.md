@@ -57,7 +57,7 @@ http://192.168.1.100:9583/private_zctpwlX7ZkIAr7oqdfLPxw
 
 ## How it works
 
-1. The addon installs a lightweight `mcp_proxy` custom integration into Home Assistant
+1. The addon installs a lightweight `mcp_proxy_rohlik` custom integration into Home Assistant
 2. This integration registers an unauthenticated webhook endpoint (`/api/webhook/<id>`)
 3. When a request hits the webhook, it is proxied to the MCP server addon
 4. The addon stays alive with a periodic health check loop
@@ -86,7 +86,7 @@ The health check cannot reach the MCP server. Check:
 
 ### Integration not loading
 
-If the `mcp_proxy` integration doesn't appear in Settings > Devices & Services:
+If the `mcp_proxy_rohlik` integration doesn't appear in Settings > Devices & Services:
 1. Restart Home Assistant (Settings > System > Restart)
 2. The addon will start automatically and retry setup
 
@@ -94,8 +94,8 @@ If the `mcp_proxy` integration doesn't appear in Settings > Devices & Services:
 
 - **Stopping** the addon is safe — the webhook URL stays the same and resumes working when the addon is restarted
 - **Uninstalling** the addon does not automatically remove the custom integration files. To fully clean up after uninstalling:
-  1. Delete `/config/custom_components/mcp_proxy/`
-  2. Delete `/config/.mcp_proxy_config.json`
+  1. Delete `/config/custom_components/mcp_proxy_rohlik/`
+  2. Delete `/config/.mcp_proxy_rohlik_config.json`
   3. Restart Home Assistant
 
 ## Support

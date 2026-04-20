@@ -5,7 +5,7 @@ It registers an unauthenticated webhook endpoint that proxies MCP requests
 to the ha-mcp addon, allowing remote access via any reverse proxy (Nabu Casa,
 Cloudflare, DuckDNS, nginx, etc.).
 
-Configuration is read from /config/.mcp_proxy_config.json, which is written
+Configuration is read from /config/.mcp_proxy_rohlik_config.json, which is written
 by the proxy addon's startup script. No manual configuration is needed — the
 addon creates the config entry automatically via the HA API.
 """
@@ -26,8 +26,8 @@ from homeassistant.helpers.typing import ConfigType
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "mcp_proxy"
-CONFIG_FILE = Path("/config/.mcp_proxy_config.json")
+DOMAIN = "mcp_proxy_rohlik"
+CONFIG_FILE = Path("/config/.mcp_proxy_rohlik_config.json")
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:

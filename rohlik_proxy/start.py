@@ -297,15 +297,15 @@ def _get_or_create_webhook_id(data_dir: Path) -> str:
 
 
 def _install_integration() -> bool:
-    """Install/update the mcp_proxy custom component into HA config dir.
+    """Install/update the mcp_proxy_rohlik custom component into HA config dir.
 
     Returns True if this is a first install (HA restart required).
     """
-    src = Path("/opt/mcp_proxy")
-    dst = Path("/config/custom_components/mcp_proxy")
+    src = Path("/opt/mcp_proxy_rohlik")
+    dst = Path("/config/custom_components/mcp_proxy_rohlik")
 
     if not src.exists():
-        log_error("Integration source not found at /opt/mcp_proxy")
+        log_error("Integration source not found at /opt/mcp_proxy_rohlik")
         return False
 
     Path("/config/custom_components").mkdir(parents=True, exist_ok=True)
@@ -329,27 +329,27 @@ def _install_integration() -> bool:
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
-        log_info("Installed mcp_proxy integration")
+        log_info("Installed mcp_proxy_rohlik integration")
     else:
-        log_info("mcp_proxy integration up to date")
+        log_info("mcp_proxy_rohlik integration up to date")
 
     return first_install
 
 
 def _ensure_config_entry(retries: int = 5, delay: int = 10) -> bool:
-    """Ensure a config entry exists for mcp_proxy. Creates one if missing."""
+    """Ensure a config entry exists for mcp_proxy_rohlik. Creates one if missing."""
     for attempt in range(1, retries + 1):
         entries = _ha_core_api("GET", "/config/config_entries/entry")
         if entries is not None:
             for entry in entries:
-                if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy":
-                    log_info("mcp_proxy config entry exists")
+                if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy_rohlik":
+                    log_info("mcp_proxy_rohlik config entry exists")
                     return True
 
             # Create via config flow
             log_info(f"Creating config entry (attempt {attempt}/{retries})...")
             flow = _ha_core_api(
-                "POST", "/config/config_entries/flow", {"handler": "mcp_proxy"}
+                "POST", "/config/config_entries/flow", {"handler": "mcp_proxy_rohlik"}
             )
             if flow is None:
                 if attempt < retries:
@@ -378,20 +378,20 @@ def _ensure_config_entry(retries: int = 5, delay: int = 10) -> bool:
 
 
 def _remove_config_entry() -> None:
-    """Remove the mcp_proxy config entry if it exists."""
+    """Remove the mcp_proxy_rohlik config entry if it exists."""
     entries = _ha_core_api("GET", "/config/config_entries/entry")
     if entries is None:
         return
     for entry in entries:
-        if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy":
+        if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy_rohlik":
             eid = entry.get("entry_id")
             if eid:
                 _ha_core_api("DELETE", f"/config/config_entries/entry/{eid}")
-                log_info("Removed mcp_proxy config entry")
+                log_info("Removed mcp_proxy_rohlik config entry")
 
 
 def _reload_config_entry() -> None:
-    """Reload the mcp_proxy config entry so it picks up the latest config file.
+    """Reload the mcp_proxy_rohlik config entry so it picks up the latest config file.
 
     If the entry was loaded during HA boot (before this addon wrote the config),
     async_setup_entry would have found no config and skipped webhook registration.
@@ -401,14 +401,14 @@ def _reload_config_entry() -> None:
     if entries is None:
         return
     for entry in entries:
-        if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy":
+        if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy_rohlik":
             eid = entry.get("entry_id")
             if eid:
                 result = _ha_core_api(
                     "POST", f"/config/config_entries/entry/{eid}/reload"
                 )
                 if result is not None:
-                    log_info("Reloaded mcp_proxy config entry")
+                    log_info("Reloaded mcp_proxy_rohlik config entry")
                 else:
                     log_info("Config entry reload returned no response (may be OK)")
                 return
@@ -460,7 +460,7 @@ def _wait_for_ha_restart(poll_interval: int = 10, timeout: int = 600) -> None:
         # Check if integration already loaded (user restarted fast)
         if isinstance(result, list):
             for entry in result:
-                if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy":
+                if isinstance(entry, dict) and entry.get("domain") == "mcp_proxy_rohlik":
                     log_info("Integration already loaded — HA must have restarted")
                     return
         time.sleep(poll_interval)
@@ -557,16 +557,16 @@ def main() -> int:
     webhook_id = _get_or_create_webhook_id(data_dir)
     webhook_path = f"/api/webhook/{webhook_id}"
 
-    # Write proxy config for the mcp_proxy integration
+    # Write proxy config for the mcp_proxy_rohlik integration
     proxy_config = {"target_url": target_url, "webhook_id": webhook_id}
-    proxy_config_file = Path("/config/.mcp_proxy_config.json")
+    proxy_config_file = Path("/config/.mcp_proxy_rohlik_config.json")
     try:
         proxy_config_file.write_text(json.dumps(proxy_config))
     except OSError as e:
         log_error(f"Failed to write proxy config: {e}")
         return 1
 
-    # Install the mcp_proxy custom component
+    # Install the mcp_proxy_rohlik custom component
     first_install = _install_integration()
 
     if first_install:
@@ -582,7 +582,7 @@ def main() -> int:
                     "Go to **Settings → System → Restart**. "
                     "The proxy will finish setup automatically after restart."
                 ),
-                "notification_id": "mcp_proxy_restart",
+                "notification_id": "mcp_proxy_rohlik_restart",
             },
         )
         log_info("")
@@ -606,7 +606,7 @@ def main() -> int:
             _ha_core_api(
                 "POST",
                 "/services/persistent_notification/dismiss",
-                {"notification_id": "mcp_proxy_restart"},
+                {"notification_id": "mcp_proxy_rohlik_restart"},
             )
             log_info("Setup completed after HA restart")
     else:
@@ -624,7 +624,7 @@ def main() -> int:
             _ha_core_api(
                 "POST",
                 "/services/persistent_notification/dismiss",
-                {"notification_id": "mcp_proxy_restart"},
+                {"notification_id": "mcp_proxy_rohlik_restart"},
             )
 
     # Resolve remote URL
@@ -681,8 +681,8 @@ def main() -> int:
     # /data/webhook_id.txt so the URL stays the same across stop/start.
     #
     # On full uninstall, the user may need to manually remove
-    # /config/custom_components/mcp_proxy/ and
-    # /config/.mcp_proxy_config.json, then restart HA.
+    # /config/custom_components/mcp_proxy_rohlik/ and
+    # /config/.mcp_proxy_rohlik_config.json, then restart HA.
     _remove_config_entry()
     log_info("Webhook proxy stopped.")
     return 0
