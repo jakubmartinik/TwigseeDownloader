@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/jakubmartinik/TwigseeHADownloader/TwigseeDownloader status)",
+      "Bash(git -C /Users/jakubmartinik/TwigseeHADownloader/TwigseeDownloader diff --stat)",
+      "Bash(git *)"
+    ]
+  }
+}

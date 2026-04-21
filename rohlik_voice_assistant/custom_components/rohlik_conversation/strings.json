@@ -1,0 +1,17 @@
+{
+  "title": "Rohlik Voice Assistant",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure Rohlik Voice Assistant",
+        "description": "Connect Claude AI with your Rohlik MCP server for voice-powered grocery shopping.",
+        "data": {
+          "api_key": "Anthropic API Key",
+          "rohlik_mcp_url": "Rohlik MCP Server URL",
+          "monthly_cap_usd": "Monthly spending cap (USD)",
+          "system_prompt": "System Prompt (instructions for the assistant)"
+        }
+      }
+    }
+  }
+}

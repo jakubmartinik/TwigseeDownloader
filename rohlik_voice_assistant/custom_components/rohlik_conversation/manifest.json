@@ -1,0 +1,10 @@
+{
+  "domain": "rohlik_conversation",
+  "name": "Rohlik Voice Assistant",
+  "version": "1.0.0",
+  "documentation": "https://github.com/jakub/rohlik-voice",
+  "requirements": [],
+  "dependencies": ["conversation"],
+  "codeowners": [],
+  "iot_class": "cloud_polling"
+}
