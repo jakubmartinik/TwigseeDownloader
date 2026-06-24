@@ -436,6 +436,36 @@ def close_modal(page):
 # Rclone upload
 # ---------------------------------------------------------------------------
 
+def normalize_rclone_token(token: str) -> str:
+    """Coerce a pasted Google Photos OAuth token into valid compact JSON.
+
+    rclone stores the token as a JSON object and re-parses it on every run. A
+    value pasted into the addon options can arrive backslash-escaped or wrapped
+    in extra quotes (e.g. ``{\"access_token\":...}``), which makes rclone fail
+    with ``invalid character '\\' looking for beginning of object key string``.
+    Unescape such values so the written config is always parseable JSON.
+    """
+    token = token.strip()
+    if not token:
+        return token
+    # Already valid JSON object — leave untouched (but compact it).
+    try:
+        return json.dumps(json.loads(token), separators=(",", ":"))
+    except (ValueError, TypeError):
+        pass
+    # Try interpreting it as a JSON *string* whose contents are the real token
+    # (handles escaped quotes and/or surrounding quotes).
+    candidate = token
+    if not (candidate.startswith('"') and candidate.endswith('"')):
+        candidate = f'"{candidate}"'
+    try:
+        inner = json.loads(candidate)
+        return json.dumps(json.loads(inner), separators=(",", ":"))
+    except (ValueError, TypeError):
+        # Last resort: strip literal backslash escapes manually.
+        return token.replace('\\"', '"').replace("\\\\", "\\")
+
+
 def upload_post(post_dir: Path, remote: str, rclone_conf: str, attempts: int = 3) -> bool:
     """Upload a single post folder to Google Photos. Runs in a background thread.
     Returns True on success, False if all attempts failed."""
@@ -863,7 +893,7 @@ def ha_main():
         rclone_conf_path = Path(rclone_conf)
         client_id = options.get('rclone_google_client_id', '')
         client_secret = options.get('rclone_google_client_secret', '')
-        token = options.get('rclone_google_token', '')
+        token = normalize_rclone_token(options.get('rclone_google_token', ''))
         desired = (
             f"[googlephotos]\ntype = google photos\n"
             f"client_id = {client_id}\n"
@@ -880,7 +910,19 @@ def ha_main():
             or f"client_secret = {client_secret}" not in existing
             or (not existing and token)
         )
-        if not rclone_conf_path.exists() or credentials_changed:
+        # Force a rewrite if the token already stored in the config is not valid
+        # JSON (e.g. a backslash-escaped paste), otherwise rclone keeps failing
+        # with "invalid character ... looking for beginning of object key".
+        existing_token_broken = False
+        for line in existing.splitlines():
+            if line.startswith("token = "):
+                stored = line[len("token = "):].strip()
+                try:
+                    json.loads(stored)
+                except (ValueError, TypeError):
+                    existing_token_broken = True
+                break
+        if not rclone_conf_path.exists() or credentials_changed or existing_token_broken:
             log.info("Writing rclone config...")
             rclone_conf_path.write_text(desired)
         else:
