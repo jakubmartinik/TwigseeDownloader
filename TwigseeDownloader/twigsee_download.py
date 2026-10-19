@@ -221,7 +221,30 @@ def handle_account_switch(page):
     if "/auth/switch" in page.url:
         page.screenshot(path=str(DATA_DIR / "debug_switch_page.png"))
         Path(DATA_DIR / "debug_switch_page.html").write_text(page.content()[:50000])
-        log.error("Still on account switch page; saved debug_switch_page.png/.html")
+        try:
+            buttons = page.evaluate('''() => [...document.querySelectorAll('button, a[href]')]
+                .filter(b => b.offsetParent).map(b => b.innerText.replace(/[\\uE000-\\uF8FF]/g, '').trim().replace(/\\s+/g, ' '))
+                .filter(t => t && !/^\\d+\\.\\d+\\.\\d+/.test(t)).slice(0, 30)''')
+            log.warning("Stuck on account switch page. Buttons: %s", buttons)
+        except Exception:
+            pass
+        # Saved session is likely stale: drop it and fall back to a fresh login
+        log.info("Clearing saved session and going to login page...")
+        try:
+            page.evaluate('''async () => {
+                localStorage.clear(); sessionStorage.clear();
+                for (const db of (await indexedDB.databases?.()) || []) indexedDB.deleteDatabase(db.name);
+            }''')
+        except Exception:
+            pass
+        page.context.clear_cookies()
+        STATE_FILE.unlink(missing_ok=True)
+        page.goto(f"{TWIGSEE_URL}/auth/login", wait_until="load", timeout=30000)
+        try:
+            page.wait_for_selector('input[type="password"]', timeout=20000)
+        except Exception:
+            pass
+        log.info("After session reset, URL: %s", page.url)
         return False
     log.info("Left account switch page, URL: %s", page.url)
     return True
