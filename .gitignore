@@ -1,3 +1,11 @@
 __pycache__/
 *.pyc
 *.log
+
+# Local run artifacts
+.env
+storage_state.json
+downloaded.json
+debug_*.png
+debug_*.html
+photos/

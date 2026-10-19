@@ -14,6 +14,7 @@ Usage:
 
 import os
 import sys
+import base64
 import json
 import hashlib
 import logging
@@ -178,29 +179,85 @@ def dismiss_popups(page):
     time.sleep(0.5)
 
 
+def handle_account_switch(page):
+    """Get past the /auth/switch account management page. Returns True if we left it."""
+    if "/auth/switch" not in page.url:
+        return False
+    log.info("Account switch page detected...")
+    time.sleep(2)
+    for text in ["Souhlasím", "Accept"]:
+        try:
+            btn = page.query_selector(f'button:has-text("{text}")')
+            if btn and btn.is_visible():
+                btn.evaluate("b => b.click()")
+                time.sleep(0.5)
+        except Exception:
+            pass
+
+    # Optional: pick a specific account by (partial) name/e-mail
+    profile = os.environ.get("TWIGSEE_PROFILE", "").strip()
+    if profile:
+        try:
+            page.get_by_text(profile, exact=False).first.evaluate("e => e.click()", timeout=5000)
+            log.info("Selected account matching '%s'.", profile)
+            time.sleep(3)
+        except Exception:
+            log.warning("No account matching '%s' found, continuing with current account.", profile)
+
+    if "/auth/switch" in page.url:
+        for text in ["Pokračovat jako aktuální účet", "Continue as current account", "Pokračovat jako"]:
+            btn = page.query_selector(f'button:has-text("{text}")')
+            if btn and btn.is_visible():
+                log.info("Clicking '%s'", btn.inner_text().strip())
+                # JS click: the "What's new" overlay intercepts real pointer events
+                btn.evaluate("b => b.click()")
+                break
+    try:
+        page.wait_for_url(lambda url: "/auth/switch" not in url, timeout=15000)
+    except Exception:
+        pass
+    time.sleep(2)
+
+    if "/auth/switch" in page.url:
+        page.screenshot(path=str(DATA_DIR / "debug_switch_page.png"))
+        Path(DATA_DIR / "debug_switch_page.html").write_text(page.content()[:50000])
+        log.error("Still on account switch page; saved debug_switch_page.png/.html")
+        return False
+    log.info("Left account switch page, URL: %s", page.url)
+    return True
+
+
+# JS snippet: finds the card header span holding the post date (teacher name is
+# its previous sibling). Older UI marked it with a #twigsee-clock <use>; the
+# current one uses a generic <i class="tw-icon">, so fall back to matching text.
+FIND_DATE_SPAN_JS = r'''
+    const findDateSpan = (el) => {
+        const clockUse = [...el.querySelectorAll('use')].find(u => {
+            const href = u.getAttribute('xlink:href') || u.getAttribute('href') || '';
+            return href === '#twigsee-clock';
+        });
+        if (clockUse && clockUse.closest('span')) return clockUse.closest('span');
+        const dateRe = /\d{1,2}\.\s*\p{L}+|dnes|včera|today|yesterday|před\s+\d+/iu;
+        return [...el.querySelectorAll('span')].find(s =>
+            s.querySelector(':scope > i, :scope > svg') && dateRe.test(s.textContent.trim())
+        ) || null;
+    };
+'''
+
+
 def get_card_metadata(card):
     """Extract teacher name, date+time, and title from a card."""
     try:
-        return card.evaluate('''el => {
-            // Teacher name: span right before the clock icon span (in the header)
+        return card.evaluate('''el => {''' + FIND_DATE_SPAN_JS + '''
+            // Teacher name: span right before the date span (in the header)
+            const clockSpan = findDateSpan(el);
             let teacher = null;
-            const clockUse = [...el.querySelectorAll('use')].find(u => {
-                const href = u.getAttribute('xlink:href') || u.getAttribute('href') || '';
-                return href === '#twigsee-clock';
-            });
-            if (clockUse) {
-                const clockSpan = clockUse.closest('span');
-                if (clockSpan && clockSpan.previousElementSibling) {
-                    teacher = clockSpan.previousElementSibling.textContent.trim();
-                }
+            if (clockSpan && clockSpan.previousElementSibling) {
+                teacher = clockSpan.previousElementSibling.textContent.trim();
             }
 
-            // Date+time: span with clock icon
-            let dateTime = null;
-            if (clockUse) {
-                const span = clockUse.closest('span');
-                if (span) { dateTime = span.textContent.trim(); }
-            }
+            // Date+time
+            const dateTime = clockSpan ? clockSpan.textContent.replace(/[\uE000-\uF8FF]/g, '').trim() : null;
 
             // Title: try multiple strategies
             let title = null;
@@ -242,8 +299,8 @@ def get_card_metadata(card):
 
             // Strategy 3: any span that is the first child of its parent div, comes after
             // the clock/header area, has text, and no children spans with title attribute
-            if (!title && clockUse) {
-                const headerSpan = clockUse.closest('span');
+            if (!title && clockSpan) {
+                const headerSpan = clockSpan;
                 let foundClock = false;
                 for (const s of allSpans) {
                     if (s === headerSpan) { foundClock = true; continue; }
@@ -269,18 +326,11 @@ def get_card_metadata(card):
 
 
 def get_card_date_text(card):
-    """Get date text from a card (looks for clock icon span)."""
+    """Get date text from a card header."""
     try:
-        return card.evaluate('''el => {
-            const uses = el.querySelectorAll('use');
-            for (const u of uses) {
-                const href = u.getAttribute('xlink:href') || u.getAttribute('href') || '';
-                if (href === '#twigsee-clock') {
-                    const span = u.closest('span');
-                    if (span) return span.textContent.trim();
-                }
-            }
-            return null;
+        return card.evaluate('''el => {''' + FIND_DATE_SPAN_JS + '''
+            const span = findDateSpan(el);
+            return span ? span.textContent.replace(/[\uE000-\uF8FF]/g, '').trim() : null;
         }''')
     except Exception:
         return None
@@ -360,38 +410,76 @@ def get_current_photo_filename(page):
     }''')
 
 
+# JS snippet: finds the gallery's "next photo" button. Older UI used a
+# #twigsee-chevron-right <use>; the current one uses icon-font glyphs
+# (\ue987 = right arrow), with a positional fallback if the glyph changes.
+FIND_RIGHT_ARROW_JS = r"""
+    const findRightArrow = () => {
+        const modal = document.querySelector('.MuiModal-root');
+        if (!modal) return null;
+        const chevron = [...modal.querySelectorAll('use')].find(u =>
+            (u.getAttribute('xlink:href') || u.getAttribute('href') || '') === '#twigsee-chevron-right');
+        if (chevron && chevron.closest('button')) return chevron.closest('button');
+        const buttons = [...modal.querySelectorAll('button')];
+        const glyph = buttons.find(b => b.textContent.trim() === '\ue987');
+        if (glyph) return glyph;
+        // Side arrows: text-less buttons vertically centred over the image
+        const h = window.innerHeight;
+        const side = buttons.filter(b => {
+            if (b.textContent.replace(/[\uE000-\uF8FF]/g, '').trim()) return false;
+            const r = b.getBoundingClientRect();
+            const mid = r.y + r.height / 2;
+            return r.width > 0 && mid > h * 0.3 && mid < h * 0.7;
+        }).sort((a, b) => a.getBoundingClientRect().x - b.getBoundingClientRect().x);
+        return side.length >= 2 ? side[side.length - 1] : null;
+    };
+"""
+
+
 def has_right_arrow(page):
     """Check if the right arrow button exists and is not disabled."""
-    return page.evaluate('''() => {
-        const modal = document.querySelector('.MuiModal-root');
-        if (!modal) return false;
-        const uses = modal.querySelectorAll('use');
-        for (const u of uses) {
-            const href = u.getAttribute('xlink:href') || u.getAttribute('href') || '';
-            if (href === '#twigsee-chevron-right') {
-                const btn = u.closest('button');
-                return btn && !btn.disabled;
-            }
-        }
-        return false;
-    }''')
+    return page.evaluate("""() => {""" + FIND_RIGHT_ARROW_JS + """
+        const btn = findRightArrow();
+        return !!btn && !btn.disabled;
+    }""")
 
 
 def click_right_arrow(page):
     """Click the right arrow. Returns True if clicked."""
-    return page.evaluate('''() => {
-        const modal = document.querySelector('.MuiModal-root');
-        if (!modal) return false;
-        const uses = modal.querySelectorAll('use');
-        for (const u of uses) {
-            const href = u.getAttribute('xlink:href') || u.getAttribute('href') || '';
-            if (href === '#twigsee-chevron-right') {
-                const btn = u.closest('button');
-                if (btn && !btn.disabled) { btn.click(); return true; }
-            }
-        }
+    return page.evaluate("""() => {""" + FIND_RIGHT_ARROW_JS + """
+        const btn = findRightArrow();
+        if (btn && !btn.disabled) { btn.click(); return true; }
         return false;
+    }""")
+
+
+def get_current_photo_data(page):
+    """Return the displayed photo as (bytes, ext) from the modal's embedded data URI.
+
+    The 'Stáhnout' button currently serves a placeholder image, but the gallery
+    embeds the full-resolution original as a base64 background. Returns None for
+    videos or when no embedded image is present.
+    """
+    data = page.evaluate('''() => {
+        const modal = document.querySelector('.MuiModal-root');
+        if (!modal) return null;
+        if (/Typ média:\\s*Video/i.test(modal.innerText || '')) return null;
+        let best = null, area = 0;
+        for (const e of modal.querySelectorAll('*')) {
+            const bg = e.tagName === 'IMG' ? e.src : getComputedStyle(e).backgroundImage;
+            if (!bg || !bg.includes('base64,')) continue;
+            const r = e.getBoundingClientRect();
+            if (r.width * r.height > area) { area = r.width * r.height; best = bg; }
+        }
+        return area > 200 * 200 ? best : null;
     }''')
+    if not data:
+        return None
+    m = re.search(r"data:image/(\w+);base64,([A-Za-z0-9+/=]+)", data)
+    if not m:
+        return None
+    ext = ".jpg" if m.group(1) in ("jpeg", "jpg") else f".{m.group(1)}"
+    return base64.b64decode(m.group(2)), ext
 
 
 def click_download_button(page):
@@ -592,6 +680,7 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
 
         # Always try to login — wait for the email input or the feed
         log.info("Current URL: %s", page.url)
+        handle_account_switch(page)
         try:
             page.wait_for_selector('input[type="email"], input[name="email"], div[id^="timelineCard"]', timeout=10000)
         except Exception:
@@ -612,6 +701,13 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                 pass
             time.sleep(2)
             log.info("After wait, URL: %s", page.url)
+
+            # Logged-in sessions may land on the account chooser instead of the feed
+            if handle_account_switch(page):
+                try:
+                    page.wait_for_selector('div[id^="timelineCard"]', timeout=20000)
+                except Exception:
+                    pass
 
             # Re-check: if we're on timeline or feed cards exist, we're logged in
             if "login" not in page.url and "auth" not in page.url or page.query_selector('div[id^="timelineCard"]'):
@@ -635,6 +731,7 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                 page.click('button[type="submit"]')
                 page.wait_for_load_state("networkidle", timeout=15000)
                 time.sleep(3)
+                handle_account_switch(page)
                 context.storage_state(path=str(STATE_FILE))
                 log.info("Session saved.")
         else:
@@ -769,6 +866,7 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                 # Subfolder per post
                 post_dir = download_dir / folder_name
                 post_dir.mkdir(parents=True, exist_ok=True)
+                last_photo_hash = None
 
                 while True:
                     time.sleep(1.5)
@@ -784,9 +882,27 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                         photo_count += 1
                         consecutive_fails = 0
                     else:
-                        # Download current photo (retry up to 3 times)
+                        # Prefer the embedded original; wait for it to change after an arrow click
                         dl_ok = False
-                        for dl_attempt in range(3):
+                        embedded = None
+                        for _ in range(10):
+                            embedded = get_current_photo_data(page)
+                            if not embedded or hashlib.sha256(embedded[0]).hexdigest() != last_photo_hash:
+                                break
+                            time.sleep(0.5)
+                        if embedded and hashlib.sha256(embedded[0]).hexdigest() != last_photo_hash:
+                            last_photo_hash = hashlib.sha256(embedded[0]).hexdigest()
+                            fname = f"{base_fname}{embedded[1]}"
+                            (post_dir / fname).write_bytes(embedded[0])
+                            downloaded.add(make_hash(fname))
+                            total_new += 1
+                            photo_count += 1
+                            consecutive_fails = 0
+                            log.info("  [%d] %s", photo_count, fname)
+                            dl_ok = True
+
+                        # Fall back to the download button (videos, missing embed) — retry up to 3 times
+                        for dl_attempt in range(0 if dl_ok else 3):
                             try:
                                 with page.expect_download(timeout=30000) as dl_info:
                                     if not click_download_button(page):
@@ -878,6 +994,7 @@ def ha_main():
 
     os.environ["TWIGSEE_EMAIL"] = options.get("email", "")
     os.environ["TWIGSEE_PASSWORD"] = options.get("password", "")
+    os.environ["TWIGSEE_PROFILE"] = options.get("profile") or ""
 
     max_age_days = options.get("max_age_days", DEFAULT_MAX_AGE_DAYS)
     schedule_hours = options.get("schedule_hours", 6)

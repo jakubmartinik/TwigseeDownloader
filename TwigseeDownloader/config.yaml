@@ -13,7 +13,8 @@ options:
   max_age_days: 5
   schedule_hours: 6
   teacher: ""
-  rclone_enabled: true
+  profile: ""
+  rclone_enabled: false
   rclone_google_client_id: ""
   rclone_google_client_secret: ""
   rclone_google_token: ""
@@ -25,6 +26,7 @@ schema:
   max_age_days: "int(1,365)"
   schedule_hours: "int(1,168)"
   teacher: "str?"
+  profile: "str?"
   rclone_enabled: "bool"
   rclone_google_client_id: "str"
   rclone_google_client_secret: "password"
