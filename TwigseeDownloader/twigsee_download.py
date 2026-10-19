@@ -44,6 +44,9 @@ DEFAULT_MAX_AGE_DAYS = 5
 MAX_SCROLL_ATTEMPTS = 30
 RETRY_DELAY_SEC = 300
 MAX_QUICK_RETRIES = 3
+EMBED_WAIT_SEC = 30
+# Twigsee's "image unavailable" picture (grey camera with an X)
+PLACEHOLDER_SHA256 = "8ba3c8ddcf99d24b27a3a9115fc28940e604e51f997f5747a3bc1928d035eca6"
 SCROLL_WAIT_SEC = 2
 
 # ---------------------------------------------------------------------------
@@ -87,8 +90,27 @@ def load_manifest(path):
     if path.exists():
         data = json.loads(path.read_text())
         data.setdefault("uploaded_albums", [])
+        data.setdefault("post_folders", {})
+        data.setdefault("repair_folders", [])
         return data
-    return {"processed_posts": [], "downloaded_files": [], "uploaded_albums": []}
+    return {"processed_posts": [], "downloaded_files": [], "uploaded_albums": [],
+            "post_folders": {}, "repair_folders": []}
+
+
+def remove_placeholders(download_dir):
+    """Delete saved placeholder images; return the names of folders that had any."""
+    folders = set()
+    for f in download_dir.glob("*/*"):
+        try:
+            if f.is_file() and f.stat().st_size < 20000 and \
+                    hashlib.sha256(f.read_bytes()).hexdigest() == PLACEHOLDER_SHA256:
+                f.unlink()
+                folders.add(f.parent.name)
+        except OSError:
+            pass
+    if folders:
+        log.info("Removed placeholder images in %d folder(s); they will be re-downloaded.", len(folders))
+    return folders
 
 
 def save_manifest(path, manifest):
@@ -488,7 +510,7 @@ def get_current_photo_data(page):
     data = page.evaluate('''() => {
         const modal = document.querySelector('.MuiModal-root');
         if (!modal) return null;
-        if (/Typ média:\\s*Video/i.test(modal.innerText || '')) return null;
+        if (/(Typ média|Media type):\\s*Video/i.test(modal.innerText || '')) return null;
         let best = null, area = 0;
         for (const e of modal.querySelectorAll('*')) {
             const bg = e.tagName === 'IMG' ? e.src : getComputedStyle(e).backgroundImage;
@@ -505,6 +527,14 @@ def get_current_photo_data(page):
         return None
     ext = ".jpg" if m.group(1) in ("jpeg", "jpg") else f".{m.group(1)}"
     return base64.b64decode(m.group(2)), ext
+
+
+def is_current_media_video(page):
+    """True if the gallery's info panel says the current item is a video."""
+    return page.evaluate('''() => {
+        const modal = document.querySelector('.MuiModal-root');
+        return !!modal && /(Typ média|Media type):\\s*Video/i.test(modal.innerText || '');
+    }''')
 
 
 def click_download_button(page):
@@ -620,6 +650,10 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
     download_dir.mkdir(parents=True, exist_ok=True)
     manifest_file = download_dir / "downloaded.json"
     manifest = load_manifest(manifest_file)
+    post_folders: dict[str, str] = manifest["post_folders"]
+    repair_folders: set[str] = set(manifest["repair_folders"]) | remove_placeholders(download_dir)
+    manifest["repair_folders"] = sorted(repair_folders)
+    save_manifest(manifest_file, manifest)
     upload_enabled = bool(rclone_conf and rclone_remote)
     upload_futures: list[tuple[Path, Future]] = []
     uploaded: set[str] = set(manifest.get("uploaded_albums", []))
@@ -826,12 +860,22 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                 teacher = normalize_name(meta["teacher"] or "unknown")
                 title = normalize_name(meta["title"] or "untitled")
                 base_folder_name = f"{date_str}_{teacher}_{title}"
-                # Avoid collisions: if folder already exists for a different post, add a counter
-                folder_name = base_folder_name
-                counter = 2
-                while (download_dir / folder_name).exists() and post_hash not in processed:
-                    folder_name = f"{base_folder_name}_{counter}"
-                    counter += 1
+                # Each post keeps its folder across runs (retries must not create _2 copies);
+                # same-named posts get a counter
+                folder_name = post_folders.get(post_hash)
+                if not folder_name:
+                    claimed = set(post_folders.values())
+                    folder_name = base_folder_name
+                    counter = 2
+                    while folder_name in claimed:
+                        folder_name = f"{base_folder_name}_{counter}"
+                        counter += 1
+                    post_folders[post_hash] = folder_name
+
+                # Saved placeholders were removed from this post's folder: download it again
+                if post_hash in processed and folder_name in repair_folders:
+                    log.info("Post %s had placeholder images — re-downloading into %s.", card_id, folder_name)
+                    processed.discard(post_hash)
 
                 # Teacher filter?
                 if teacher_filter and teacher_filter.lower() not in (meta["teacher"] or "").lower():
@@ -842,6 +886,7 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                     log.info("Post %s from %s is too old — done.", card_id, date_str)
                     manifest["processed_posts"] = list(processed)
                     manifest["downloaded_files"] = list(downloaded)
+                    manifest["repair_folders"] = sorted(repair_folders)
                     save_manifest(manifest_file, manifest)
                     context.storage_state(path=str(STATE_FILE))
                     browser.close()
@@ -900,19 +945,30 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                     existing = list(post_dir.glob(f"{base_fname}.*"))
                     if existing:
                         log.info("  [skip] %s already on disk", existing[0].name)
+                        last_photo_hash = hashlib.sha256(existing[0].read_bytes()).hexdigest()
                         photo_count += 1
                         consecutive_fails = 0
                     else:
-                        # Prefer the embedded original; wait for it to change after an arrow click
+                        # Save the embedded original once the gallery shows a new, real photo.
+                        # After an arrow click it takes a moment (longer on slow hosts).
                         dl_ok = False
-                        embedded = None
-                        for _ in range(10):
+                        is_video = False
+                        deadline = time.time() + EMBED_WAIT_SEC
+                        while True:
                             embedded = get_current_photo_data(page)
-                            if not embedded or hashlib.sha256(embedded[0]).hexdigest() != last_photo_hash:
+                            if embedded:
+                                digest = hashlib.sha256(embedded[0]).hexdigest()
+                                if digest not in (last_photo_hash, PLACEHOLDER_SHA256):
+                                    break
+                            elif is_current_media_video(page):
+                                is_video = True
+                                break
+                            if time.time() > deadline:
+                                embedded = None
                                 break
                             time.sleep(0.5)
-                        if embedded and hashlib.sha256(embedded[0]).hexdigest() != last_photo_hash:
-                            last_photo_hash = hashlib.sha256(embedded[0]).hexdigest()
+                        if embedded:
+                            last_photo_hash = digest
                             fname = f"{base_fname}{embedded[1]}"
                             (post_dir / fname).write_bytes(embedded[0])
                             downloaded.add(make_hash(fname))
@@ -921,9 +977,11 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                             consecutive_fails = 0
                             log.info("  [%d] %s", photo_count, fname)
                             dl_ok = True
+                        elif not is_video:
+                            log.warning("  Photo %d did not load within %ds.", photo_index, EMBED_WAIT_SEC)
 
-                        # Fall back to the download button (videos, missing embed) — retry up to 3 times
-                        for dl_attempt in range(0 if dl_ok else 3):
+                        # Videos aren't embedded: use the download button — retry up to 3 times
+                        for dl_attempt in range(3 if is_video else 0):
                             try:
                                 with page.expect_download(timeout=30000) as dl_info:
                                     if not click_download_button(page):
@@ -935,6 +993,10 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                                 fname = f"{base_fname}{ext}"
                                 dest = post_dir / fname
                                 dl.save_as(str(dest))
+                                if hashlib.sha256(dest.read_bytes()).hexdigest() == PLACEHOLDER_SHA256:
+                                    dest.unlink()
+                                    log.warning("  Download returned the placeholder image.")
+                                    break
                                 downloaded.add(make_hash(fname))
                                 total_new += 1
                                 photo_count += 1
@@ -946,6 +1008,8 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                                 log.warning("  Download failed (attempt %d/3): %s", dl_attempt + 1, e)
                                 time.sleep(2)
                         if not dl_ok:
+                            # Keep numbering aligned with gallery position so a retry fills this slot
+                            photo_count += 1
                             consecutive_fails += 1
                             had_failures = True
                             if consecutive_fails >= 2:
@@ -977,12 +1041,14 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                     log.warning("  Post had download failures — will retry next run.")
                 else:
                     processed.add(post_hash)
+                    repair_folders.discard(folder_name)
                     if executor is not None:
                         future = executor.submit(upload_post, post_dir, rclone_remote, rclone_conf)
                         upload_futures.append((post_dir, future))
                 posts_done += 1
                 manifest["processed_posts"] = list(processed)
                 manifest["downloaded_files"] = list(downloaded)
+                manifest["repair_folders"] = sorted(repair_folders)
                 save_manifest(manifest_file, manifest)
                 log.info("  Post done. %d new photos so far.", total_new)
 
@@ -1000,6 +1066,7 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
         context.storage_state(path=str(STATE_FILE))
         manifest["processed_posts"] = list(processed)
         manifest["downloaded_files"] = list(downloaded)
+        manifest["repair_folders"] = sorted(repair_folders)
         save_manifest(manifest_file, manifest)
         browser.close()
 
