@@ -42,6 +42,8 @@ LOG_FILE = DATA_DIR / "twigsee.log"
 TWIGSEE_URL = "https://app.twigsee.com"
 DEFAULT_MAX_AGE_DAYS = 5
 MAX_SCROLL_ATTEMPTS = 30
+RETRY_DELAY_SEC = 300
+MAX_QUICK_RETRIES = 3
 SCROLL_WAIT_SEC = 2
 
 # ---------------------------------------------------------------------------
@@ -678,7 +680,6 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                 "--disable-sync",
                 "--disable-translate",
                 "--no-first-run",
-                "--js-flags=--max-old-space-size=256",
             ],
         }
         chromium_path = os.environ.get("CHROMIUM_PATH")
@@ -744,9 +745,8 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                 if not page.query_selector(email_sel):
                     page.screenshot(path=str(DATA_DIR / "debug_login_page.png"))
                     Path(DATA_DIR / "debug_login_page.html").write_text(page.content()[:10000])
-                    log.error("Login form never appeared. URL: %s", page.url)
                     browser.close()
-                    return 0
+                    raise RuntimeError(f"Login form never appeared. URL: {page.url}")
                 page.fill(email_sel, email)
                 pwd_sel = 'input[type="password"], input[name="password"]'
                 page.fill(pwd_sel, password)
@@ -777,10 +777,9 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                 time.sleep(3)
 
         if not feed_found:
-            log.error("No posts found. URL: %s", page.url)
             page.screenshot(path=str(DATA_DIR / "debug_no_posts.png"))
             browser.close()
-            return 0
+            raise RuntimeError(f"No posts found. URL: {page.url}")
 
         # --- Process posts ---
         log.info("Scanning feed...")
@@ -1074,6 +1073,7 @@ def ha_main():
     log.info("Twigsee Downloader started — every %d hours, max age %d days, quiet %d:00-%d:00",
              schedule_hours, max_age_days, quiet_start, quiet_end)
 
+    failures = 0
     while True:
         if is_quiet_hour():
             log.info("Quiet hours active, skipping. Next check in 30 min.")
@@ -1084,8 +1084,18 @@ def ha_main():
             run(headless=True, download_dir=Path("/media/twigsee"),
                 max_age_days=max_age_days, teacher_filter=teacher,
                 rclone_conf=rclone_conf, rclone_remote=rclone_remote)
+            failures = 0
         except Exception as e:
             log.error("Download run failed: %s", e)
+            failures += 1
+            # Retry soon after a crash; progress is saved per post, so it resumes
+            if failures <= MAX_QUICK_RETRIES:
+                log.info("Retrying in %d min (attempt %d/%d)",
+                         RETRY_DELAY_SEC // 60, failures, MAX_QUICK_RETRIES)
+                time.sleep(RETRY_DELAY_SEC)
+                continue
+            log.warning("Giving up after %d quick retries.", MAX_QUICK_RETRIES)
+            failures = 0
         log.info("Next run in %d hours", schedule_hours)
         time.sleep(schedule_hours * 3600)
 
