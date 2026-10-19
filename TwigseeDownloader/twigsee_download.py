@@ -655,7 +655,6 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                 "--disable-sync",
                 "--disable-translate",
                 "--no-first-run",
-                "--single-process",
                 "--js-flags=--max-old-space-size=256",
             ],
         }
