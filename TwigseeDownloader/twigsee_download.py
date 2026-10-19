@@ -117,6 +117,23 @@ def save_manifest(path, manifest):
     path.write_text(json.dumps(manifest, indent=2))
 
 
+def report_incomplete(download_dir, repair_folders):
+    """Log folders still waiting for repair and folders with gaps in their numbering."""
+    if repair_folders:
+        log.warning("%d folder(s) still waiting to re-download placeholder photos: %s",
+                    len(repair_folders), ", ".join(sorted(repair_folders)))
+    gaps = []
+    for d in sorted(p for p in download_dir.iterdir() if p.is_dir()):
+        nums = {int(f.stem) for f in d.iterdir() if f.is_file() and f.stem.isdigit()}
+        missing = sorted(set(range(1, max(nums, default=0) + 1)) - nums)
+        if missing:
+            gaps.append(f"{d.name} (missing {', '.join(f'{n:03d}' for n in missing)})")
+    if gaps:
+        log.warning("%d folder(s) have missing photos: %s", len(gaps), "; ".join(gaps))
+    if not repair_folders and not gaps:
+        log.info("All folders complete.")
+
+
 def make_hash(text):
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
@@ -891,6 +908,7 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                     context.storage_state(path=str(STATE_FILE))
                     browser.close()
                     flush_uploads()
+                    report_incomplete(download_dir, repair_folders)
                     log.info("Done! %d posts, %d new photos.", posts_done, total_new)
                     print(f"NEW_PHOTOS={total_new}")
                     return total_new
@@ -902,9 +920,14 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
 
                 log.info("=== %s ===", folder_name)
 
+                # Twigsee re-renders cards (e.g. once thumbnails load), which detaches
+                # old handles — always look the card up again by id before using it
+                def current_card():
+                    return page.query_selector(f'div[id="{card_id}"]') or card
+
                 # Scroll into view first, then try to click a photo
                 try:
-                    card.scroll_into_view_if_needed()
+                    current_card().scroll_into_view_if_needed()
                     time.sleep(1)
                 except Exception:
                     pass
@@ -912,12 +935,12 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
                 # Click the first photo to open the gallery modal (retry up to 3 times)
                 gallery_opened = False
                 for attempt in range(3):
-                    if click_first_photo(card, page):
+                    if click_first_photo(current_card(), page):
                         gallery_opened = True
                         break
                     log.warning("  Gallery open failed (attempt %d/3), retrying...", attempt + 1)
                     try:
-                        card.scroll_into_view_if_needed()
+                        current_card().scroll_into_view_if_needed()
                     except Exception:
                         pass
                     time.sleep(2)
@@ -1072,6 +1095,7 @@ def run(headless, download_dir, max_age_days, teacher_filter=None, rclone_conf=N
 
     flush_uploads()
 
+    report_incomplete(download_dir, repair_folders)
     log.info("Done! %d posts, %d new photos.", posts_done, total_new)
     print(f"NEW_PHOTOS={total_new}")
     return total_new
