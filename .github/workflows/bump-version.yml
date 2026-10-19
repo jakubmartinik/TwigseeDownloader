@@ -23,9 +23,13 @@ jobs:
 
       - name: Determine bump type
         id: bump
+        # Pass untrusted text via env, never interpolate it into the script
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          MSG: ${{ github.event.head_commit.message }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+          if [ "$EVENT_NAME" = "pull_request" ]; then
             if echo "$LABELS" | grep -q "bump:major"; then
               echo "type=major" >> $GITHUB_OUTPUT
             elif echo "$LABELS" | grep -q "bump:minor"; then
@@ -36,7 +40,6 @@ jobs:
               echo "type=none" >> $GITHUB_OUTPUT
             fi
           else
-            MSG="${{ github.event.head_commit.message }}"
             if echo "$MSG" | grep -q "#major"; then
               echo "type=major" >> $GITHUB_OUTPUT
             elif echo "$MSG" | grep -q "#minor"; then
